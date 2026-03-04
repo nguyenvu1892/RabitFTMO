@@ -1,0 +1,24 @@
+# ============================================================
+# requirements.txt — Rabit_FTMO AI (XAGUSD)
+# Python 3.10+
+# ============================================================
+
+# --- TẦNG 1: KẾT NỐI & DỮ LIỆU (Core MT5 Stack) ---
+MetaTrader5>=5.0.45        # Cầu nối Python <-> MetaTrader 5 Terminal
+pandas>=2.0.0              # DataFrame xử lý OHLCV + Tick Volume (5 Vũ khí)
+numpy>=1.26.0              # Tính toán vector ATR/SL/TP nhanh (np.array)
+
+# --- TẦNG 2: BẢO MẬT (Security) ---
+python-dotenv>=1.0.0       # Load MT5_LOGIN/PASSWORD/SERVER từ .env (không hardcode)
+
+# --- TẦNG 3: TIỆN ÍCH (Utilities) ---
+requests>=2.31.0           # HTTP client — News Filter API Lịch kinh tế (Phase 2.3)
+schedule>=1.2.0            # Scheduler tự động chạy bot theo giờ phiên (Phase 4)
+
+# --- TẦNG 4: LOGGING NÂNG CAO (Phase 4 optional) ---
+# loguru>=0.7.0            # Uncomment khi cần logging nâng cao (Phase 4)
+
+# --- TẦNG 5: AI / MACHINE LEARNING (Phase 5 — chưa cần cài bây giờ) ---
+# stable-baselines3>=2.3.0
+# gymnasium>=0.29.0
+# torch>=2.0.0
