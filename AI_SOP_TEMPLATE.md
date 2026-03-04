@@ -5,6 +5,17 @@ Tôi muốn [NHIỆM VỤ CỤ THỂ CẦN LÀM] để mà [MỤC TIÊU/TIÊU CH
 **I. QUY TRÌNH BẮT BUỘC (VỆ SINH GIT & LOGGING)**
 [... Giữ nguyên như cũ ...]
 
+**I.B — LUẬT THÉP: BẮT BUỘC MERGE TRƯỚC KHI SANG TASK MỚI**
+> Được ban hành bởi TechLead ngày 2026-03-05 sau sự cố Task 1.1.
+
+Sau khi bất kỳ nhánh (branch) nào được TechLead nghiệm thu và không có lỗi logic, Antigravity BẮT BUỘC phải thực hiện đầy đủ 3 lệnh sau TRƯỚC KHI checkout sang nhánh mới:
+```bash
+git checkout main
+git merge --no-ff feature/<tên-nhánh> -m "[Phase X][Task X.X] MERGE <tên-nhánh> -> main: <mô tả>"
+git push origin main
+```
+Chỉ sau khi `git push origin main` thành công và được xác nhận, Antigravity mới được phép tạo nhánh mới cho Task tiếp theo.
+
 **II. QUY TRÌNH ÉP BUỘC: ANALYZE & REPORT FIRST (SOP)**
 [... Giữ nguyên như cũ ...]
 
