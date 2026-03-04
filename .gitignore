@@ -1,0 +1,51 @@
+# ============================================================
+# .gitignore — Dự án Rabit_FTMO AI
+# ============================================================
+
+# --- BẢO MẬT: TUYỆT ĐỐI KHÔNG COMMIT ---
+.env                    # MT5 credentials (LOGIN/PASSWORD/SERVER FTMO)
+*.key
+*.pem
+
+# --- Môi trường Python ảo ---
+venv/
+.venv/
+env/
+ENV/
+
+# --- Cache Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+
+# --- Logs runtime (generated, không cần tracking) ---
+logs/
+*.log
+
+# --- Dữ liệu tạm & cache ---
+.cache/
+*.tmp
+*.bak
+
+# --- IDE & Editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- Build / Distribution ---
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# --- Jupyter Notebook ---
+.ipynb_checkpoints/
+
+# --- Models & Data lớn (nếu có) ---
+models/*.zip
+data/raw/
