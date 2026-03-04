@@ -25,3 +25,13 @@ FORMAT: [Phase X] Task X.X <Tên Task> - Lý do: <Giải thích>
   - Người thực thi: Antigravity (AI Coder)
   - TechLead review: ĐÃ DUYỆT
 ------------------------------------------------------------
+[Phase 1] Task 1.2 Viết Data Pipeline
+  - Ngày  : 2026-03-05
+  - Branch : feature/task1.2-data-pipeline
+  - Lý do  : Xây dựng hàm kết nối MT5 và kéo dữ liệu nến chuẩn bị cho các module phân tích
+  - Files thay đổi:
+      core/data_pipeline.py  — Implement class MT5DataPipeline (connect, fetch_data, disconnect)
+      docs/walkthrough.md    — Phân tích kiến trúc, timezone, xử lý lỗi
+  - Người thực thi: Antigravity (AI Coder)
+  - TechLead review: ĐANG CHỜ DUYỆT
+------------------------------------------------------------
