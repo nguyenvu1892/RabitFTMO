@@ -55,3 +55,14 @@ FORMAT: [Phase X] Task X.X <Tên Task> - Lý do: <Giải thích>
   - Người thực thi: Antigravity (AI Coder)
   - TechLead review: ĐANG CHỜ DUYỆT
 ------------------------------------------------------------
+[Phase 2] BUG FIX — Thiếu khai báo thư viện pytz trong requirements.txt
+  - Ngày  : 2026-03-05
+  - Branch : main (hotfix trực tiếp)
+  - Lý do  : RiskManager dùng pytz để tính timezone Europe/Prague (CE(S)T) nhưng
+             quên khai báo vào requirements.txt → ModuleNotFoundError khi chạy main.py
+  - Files thay đổi:
+      requirements.txt — Thêm pytz>=2023.3 vào Tầng 2
+  - Rút kinh nghiệm: Mỗi khi import thư viện mới → cập nhật requirements.txt NGAY
+  - Người thực thi: Antigravity (AI Coder)
+  - TechLead review: ĐÃ DUYỆT (hotfix)
+------------------------------------------------------------

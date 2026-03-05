@@ -10,6 +10,7 @@ numpy>=1.26.0              # Tính toán vector ATR/SL/TP nhanh (np.array)
 
 # --- TẦNG 2: BẢO MẬT (Security) ---
 python-dotenv>=1.0.0       # Load MT5_LOGIN/PASSWORD/SERVER từ .env (không hardcode)
+pytz>=2023.3               # Timezone CE(S)T (Europe/Prague) cho RiskManager — tính Daily Drawdown FTMO
 
 # --- TẦNG 3: TIỆN ÍCH (Utilities) ---
 requests>=2.31.0           # HTTP client — News Filter API Lịch kinh tế (Phase 2.3)
