@@ -327,6 +327,67 @@ class MT5DataPipeline:
         )
         return None
 
+    def get_account_info(self) -> dict | None:
+        """
+        Lấy thông tin tài khoản FTMO từ MT5.
+
+        Trả về Dict chứa các chỉ số tài chính cần thiết cho Phase 2
+        Capital Management (tính lot size động theo equity).
+
+        Returns:
+            dict: {
+                'balance'     : float — Số dư tài khoản (USD),
+                'equity'      : float — Equity thực tế (balance +/- P&L mở),
+                'margin_free' : float — Margin khả dụng để mở lệnh mới,
+                'margin'      : float — Margin đang bị chiếm giữ,
+                'profit'      : float — Lãi/lỗ tổng các lệnh đang mở,
+                'currency'    : str   — Đơn vị tiền tệ (USD),
+                'leverage'    : int   — Đòn bẩy tài khoản (vd: 100),
+            }
+            None: Nếu chưa kết nối hoặc MT5 báo lỗi.
+
+        Dùng trong Phase 2:
+            info = pipeline.get_account_info()
+            equity = info['equity']
+            lot_size = round((equity * RISK_PER_TRADE) / (sl_pips * pip_value), 2)
+        """
+        if not self._is_connected:
+            system_logger.warning(
+                "MT5DataPipeline.get_account_info | Chưa kết nối MT5. "
+                "Gọi connect() trước."
+            )
+            return None
+
+        info = mt5.account_info()
+
+        if info is None:
+            err = mt5.last_error()
+            system_logger.error(
+                f"MT5DataPipeline.get_account_info | account_info() trả về None — "
+                f"Lỗi MT5: {err}"
+            )
+            return None
+
+        result = {
+            "balance":     info.balance,
+            "equity":      info.equity,
+            "margin_free": info.margin_free,
+            "margin":      info.margin,
+            "profit":      info.profit,
+            "currency":    info.currency,
+            "leverage":    info.leverage,
+        }
+
+        system_logger.info(
+            f"MT5DataPipeline.get_account_info | "
+            f"Balance: {result['balance']:.2f} {result['currency']} | "
+            f"Equity: {result['equity']:.2f} | "
+            f"Free Margin: {result['margin_free']:.2f} | "
+            f"P&L Open: {result['profit']:.2f}"
+        )
+
+        return result
+
     def disconnect(self) -> None:
         """
         Đóng kết nối MT5 và giải phóng tài nguyên terminal.
