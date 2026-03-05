@@ -85,5 +85,14 @@ FORMAT: [Phase X] Task X.X <Tên Task> - Lý do: <Giải thích>
       config/settings.py       — Thêm các tham số Vũ khí 3: PINBAR_RATIO, VSA_VOLUME_MULT, ATR_PINBAR_MIN
       docs/walkthrough.md      — Phân tích thuật toán Pinbar M5 + VSA Relative Volume + logic POI
   - Người thực thi: Antigravity (AI Coder)
-  - TechLead review: ĐANG CHỜ DUYỆT
+  - TechLead review: ĐÃ DUYỆT (Merged vào main)
 ------------------------------------------------------------
+[Phase 3] Nghiệm thu toàn bộ Phase 3 (Strategy Engine)
+  - Ngày  : 2026-03-05
+  - Branch : main
+  - Lý do  : Tích hợp thành công 3 vũ khí SMC/VSA: H1 Bias (Compass), M15 FVG (Bẫy POI), M5 Pinbar+VSA (Trigger).
+  - Tình trạng: Hệ thống đã kiểm tra Smoke Test cho luồng phân tích nhận diên thị trường từ đa khung thời gian. Các thông số tunable (FRACTAL_PERIOD, FVG_MIN_GAP_MULTIPLE, PINBAR_RATIO, VSA_VOLUME_MULTIPLIER...) đã sẵn sàng cho Machine Learning Optimizer trên config/settings.py.
+  - Người thực thi: Antigravity (AI Coder)
+  - TechLead review: ĐÃ NGHIỆM THU
+------------------------------------------------------------
+
