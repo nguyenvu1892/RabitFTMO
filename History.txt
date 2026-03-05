@@ -76,3 +76,14 @@ FORMAT: [Phase X] Task X.X <Tên Task> - Lý do: <Giải thích>
   - Người thực thi: Antigravity (AI Coder)
   - TechLead review: ĐANG CHỜ DUYỆT
 ------------------------------------------------------------
+[Phase 3] Task 3.2 Code logic M5 Trigger và VSA
+  - Ngày  : 2026-03-05
+  - Branch : feature/phase3.2-m5-vsa-trigger
+  - Lý do  : Xây dựng bộ lọc tín hiệu vào lệnh bằng nến đảo chiều và xác nhận dòng tiền
+  - Files dự kiến:
+      core/strategy_engine.py  — Bổ sung hàm check_m5_trigger() (Pinbar + VSA + FVG check)
+      config/settings.py       — Thêm các tham số Vũ khí 3: PINBAR_RATIO, VSA_VOLUME_MULT, ATR_PINBAR_MIN
+      docs/walkthrough.md      — Phân tích thuật toán Pinbar M5 + VSA Relative Volume + logic POI
+  - Người thực thi: Antigravity (AI Coder)
+  - TechLead review: ĐANG CHỜ DUYỆT
+------------------------------------------------------------

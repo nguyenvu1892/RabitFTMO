@@ -809,3 +809,416 @@ StrategyEngine
 *Tài liệu này ghi lại toàn bộ quá trình phân tích → thiết kế → implementation của Task 3.1.*
 *Antigravity sẵn sàng cho Task 3.2 — Vũ khí 3: Pinbar M5.*
 
+
+---
+---
+
+# Phase 3 — Task 3.2: Phân tích Trigger M5 & VSA (ANALYZE & REPORT FIRST)
+
+**Branch:** `feature/phase3.2-m5-vsa-trigger`
+**Author:** Antigravity (AI Coder)
+**Date:** 2026-03-05
+**Status:** 🟡 PENDING TechLead Review — Awaiting "PROCEED" command
+
+---
+
+## Mục Lục
+
+1. [Thuật toán nhận diện Pinbar/Hammer M5 — Toán học chính xác](#1-thuật-toán-nhận-diện-pinbarhammer-m5--toán-học-chính-xác)
+2. [Thuật toán VSA — Relative Volume & Ngưỡng đột biến](#2-thuật-toán-vsa--relative-volume--ngưỡng-đột-biến)
+3. [Logic phối hợp POI — Kiểm tra FVG M15 trước khi phát tín hiệu](#3-logic-phối-hợp-poi--kiểm-tra-fvg-m15-trước-khi-phát-tín-hiệu)
+4. [Luồng xử lý tổng thể `check_m5_trigger()`](#4-luồng-xử-lý-tổng-thể-check_m5_trigger)
+5. [Rủi ro & Biện pháp Giảm thiểu](#5-rủi-ro--biện-pháp-giảm-thiểu)
+
+---
+
+## 1. Thuật toán nhận diện Pinbar/Hammer M5 — Toán học chính xác
+
+### 1.1 Bài toán: Pinbar hợp lệ vs Pinbar nhiễu
+
+**Pinbar** (Price Action Bar / Pin Bar) là nến có râu dài và thân nhỏ, dấu hiệu giá **từ chối vùng giá** mạnh — smart money đẩy giá đi rồi phục hồi về. Tuy nhiên trong thực tế, có rất nhiều "Pinbar rởm":
+
+| Loại nến | Mô tả | Hành động |
+|----------|-------|-----------|
+| **Pinbar thật** | Râu dài đột ngột, thân nhỏ, xảy ra tại vùng hỗ trợ/kháng cự | ✅ Giao dịch |
+| **Spike spread** | XAGUSD giãn spread lúc tin tức → nến có râu dài nhưng không phải price action thật | ❌ Lọc bằng ATR |
+| **Doji nhiễu** | Thân siêu nhỏ, hai râu đều dài → thị trường do dự, không phải từ chối giá | ❌ Lọc bằng hướng râu |
+| **Nến bình thường** | Râu ngắn, thân lớn → đây là Impulse, không phải Pinbar | ❌ Lọc bằng wick ratio |
+
+### 1.2 Phân tích toán học cấu trúc nến Pinbar
+
+Mỗi nến có 4 thành phần:
+```
+ANATOMY OF A CANDLE:
+                  ─── HIGH
+                   |
+               [UPPER WICK]
+                   |
+             ┌─────────┐  ─── max(open, close)
+             │  BODY   │
+             └─────────┘  ─── min(open, close)
+                   |
+               [LOWER WICK]
+                   |
+                  ─── LOW
+
+Candle RANGE     = HIGH - LOW
+Upper Wick (UW)  = HIGH - max(OPEN, CLOSE)
+Lower Wick (LW)  = min(OPEN, CLOSE) - LOW
+Body (B)         = |CLOSE - OPEN|
+```
+
+### 1.3 Công thức toán học nhận diện Pinbar chính xác
+
+**Định nghĩa chuẩn — 3-Ratio System:**
+
+```
+Đặt:
+    RANGE   = high - low          (tổng chiều dài nến)
+    UW      = high - max(open, close)   (upper wick)
+    LW      = min(open, close) - low    (lower wick)
+    BODY    = |close - open|            (thân nến)
+    POINT   = mt5.symbol_info('XAGUSD').point  ≈ 0.001
+
+Điều kiện RANGE hợp lệ (tránh DIV/0):
+    RANGE > POINT  →  nến không phải doji hoàn toàn
+
+=== HAMMER (Bullish Pinbar — tín hiệu BUY) ===
+Điều kiện:
+  (1) Lower Wick là "râu từ chối" chính:
+      LW / RANGE >= PINBAR_WICK_RATIO   [khoảng 0.60]
+      → Râu dưới >= 60% tổng chiều dài nến
+
+  (2) Upper Wick nhỏ (không phải shooting star lẫn lộn):
+      UW / RANGE <= PINBAR_BODY_MAX_RATIO   [khoảng 0.25]
+      → Râu trên <= 25% tổng chiều dài nến
+
+  (3) Thân nến nhỏ (đặc trưng từ chối giá):
+      BODY / RANGE <= PINBAR_BODY_MAX_RATIO   [khoảng 0.30]
+      → Thân <= 30% tổng chiều dài nến — thể hiện lực đẩy ngược mạnh
+
+=== SHOOTING STAR (Bearish Pinbar — tín hiệu SELL) ===
+Điều kiện (đối xứng):
+  (1) UW / RANGE >= PINBAR_WICK_RATIO   [>= 0.60]
+  (2) LW / RANGE <= PINBAR_BODY_MAX_RATIO   [<= 0.25]
+  (3) BODY / RANGE <= PINBAR_BODY_MAX_RATIO   [<= 0.30]
+```
+
+**Ví dụ số học minh họa:**
+```
+Nến M5 XAGUSD:
+  open=30.500, high=30.620, low=30.350, close=30.530
+
+  RANGE  = 30.620 - 30.350 = 0.270
+  UW     = 30.620 - max(30.500, 30.530) = 30.620 - 30.530 = 0.090
+  LW     = min(30.500, 30.530) - 30.350 = 30.500 - 30.350 = 0.150
+  BODY   = |30.530 - 30.500| = 0.030
+
+  Kiểm tra Hammer:
+  LW/RANGE  = 0.150 / 0.270 = 55.6%  → < 60% ❌ (không đủ)
+
+Nến M5 thứ 2:
+  open=30.500, high=30.560, low=30.300, close=30.510
+
+  RANGE  = 0.260
+  UW     = 30.560 - 30.510 = 0.050
+  LW     = 30.500 - 30.300 = 0.200
+  BODY   = 0.010
+
+  Kiểm tra Hammer:
+  LW/RANGE  = 0.200 / 0.260 = 76.9%  ✅  >= 60%
+  UW/RANGE  = 0.050 / 0.260 = 19.2%  ✅  <= 25%
+  BODY/RANGE= 0.010 / 0.260 = 3.8%   ✅  <= 30%
+  → VALID HAMMER ✅
+```
+
+### 1.4 Tham số AI-Tunable cho Pinbar
+
+```python
+# config/settings.py — VŨ KHÍ 3
+PINBAR_WICK_RATIO      = 0.60  # Râu chính / tổng nến >= 60%   [range: 0.50–0.75]
+PINBAR_BODY_MAX_RATIO  = 0.30  # Thân + râu phụ <= 30%          [range: 0.20–0.40]
+ATR_PINBAR_MIN_MULT    = 0.5   # Nến quá nhỏ < 0.5×ATR → loại bỏ [range: 0.3–1.0]
+```
+
+---
+
+## 2. Thuật toán VSA — Relative Volume & Ngưỡng đột biến
+
+### 2.1 Tổng quan VSA (Volume Spread Analysis)
+
+**VSA** phân tích mối quan hệ giữa **Volume (dòng tiền)** và **Price Spread (biên độ giá)** để xác định "Smart Money" có đang tham gia hay không.
+
+**Nguyên tắc cốt lõi VSA áp dụng trong Rabit_FTMO:**
+> Một nến Pinbar **có ý nghĩa** khi đi kèm Volume đột biến — tức là Smart Money thực sự đang đẩy giá, không phải biến động ngẫu nhiên hay spread giãn.
+
+| Volume tại Pinbar | Ý nghĩa | Hành động |
+|--------------------|---------|-----------|
+| **Volume đột biến (Spike)** | Smart Money tham gia mạnh — dấu hiệu đảo chiều thật | ✅ Phát tín hiệu |
+| **Volume trung bình** | Không có xác nhận dòng tiền → từ chối giá chưa chắc chắn | ⚠️ Cân nhắc (optional filter) |
+| **Volume thấp (dry-up)** | Thị trường thiếu người mua/bán → Pinbar là nhiễu | ❌ Loại bỏ |
+
+### 2.2 Tại sao chọn SMA(20) thay vì các con số khác?
+
+**So sánh các baseline alternatives:**
+
+| Baseline | Công thức | Ưu điểm | Nhược điểm |
+|----------|-----------|---------|------------|
+| **SMA(10)** | TB 10 nến M5 (~50 phút) | Nhạy với volume gần nhất | Quá ngắn → bị distort bởi 1-2 spike vừa xảy ra |
+| **SMA(20)** ✅ | TB 20 nến M5 (~100 phút) | **Cân bằng — đủ "nhớ" 1-2 phiên** | Mặc định công nghiệp (Bollinger Band cũng dùng SMA20) |
+| **SMA(50)** | TB 50 nến M5 (~250 phút) | Ổn định hơn, ít bị outlier ảnh hưởng | Quá chậm → baseline "nhớ" thời điểm tin tức cũ |
+| **EMA(20)** | EMA trọng số | Nhạy với volume mới | Phức tạp hơn, ít trực quan với trader |
+| **Median(20)** | Trung vị 20 nến | Không bị ảnh hưởng bởi outlier | Khó interpret cho TechLead khi review log |
+
+**Lý do chọn SMA(20):**
+1. **Standard industry practice:** Bollinger Bands (20 period SMA), VWAP deviation analysis đều dùng window 20.
+2. **~100 phút lookback:** Đủ để bao phủ "bối cảnh volume bình thường" của phiên giao dịch hiện tại mà không kéo dài vào phiên trước.
+3. **Đơn giản, dễ audit:** `volume.rolling(20).mean()` — bất kỳ TechLead nào cũng có thể verify bằng tay.
+4. **Phù hợp XAGUSD:** Silver có thanh khoản thấp hơn Gold — window 20 (~100 phút) phù hợp hơn window ngắn (10) để tránh false spike từ 1-2 tick volume bất thường.
+
+### 2.3 Công thức tính VSA Relative Volume
+
+```
+=== CÀI ĐẶT BASELINE ===
+vol_ma = SMA(tick_volume, VOLUME_MA_PERIOD)   # SMA20 của tick_volume
+        = sum(tick_volume[-20:]) / 20          # Trung bình 20 nến M5 gần nhất
+
+=== XÁC ĐỊNH NGƯỠNG ĐỘT BIẾN ===
+Mức Volume đột biến (Spike):
+    current_volume >= vol_ma × VSA_VOLUME_MULTIPLIER
+
+Với:
+    VSA_VOLUME_MULTIPLIER = 1.5   (AI-tunable, range: 1.2–2.5)
+    → Volume nến hiện tại >= 1.5 lần trung bình 20 nến = Spike xác nhận
+
+=== PHÂN LOẠI VOLUME (3 tiers) ===
+    volume_ratio = current_volume / vol_ma
+
+    ratio >= VSA_VOLUME_MULTIPLIER (>=1.5):  "SPIKE"   → ✅ Xác nhận VSA
+    ratio >= 1.0:                             "NORMAL"  → ⚠️ Không xác nhận
+    ratio <  1.0:                             "DRY-UP"  → ❌ Loại bỏ
+```
+
+**Ví dụ số học:**
+```
+tick_volume 20 nến M5 gần nhất:
+    [120, 85, 200, 95, 110, 175, 80, 130, 90, 145,
+     160, 70, 115, 195, 88, 102, 135, 78, 165, 92]
+
+vol_ma_20 = sum / 20 = 2430 / 20 = 121.5
+
+Nến Pinbar hiện tại:
+    current_volume = 215
+
+volume_ratio = 215 / 121.5 = 1.77
+
+1.77 >= 1.5  → SPIKE ✅ — VSA xác nhận
+```
+
+### 2.4 Tham số AI-Tunable cho VSA
+
+```python
+# config/settings.py — VŨ KHÍ 3 (tiếp)
+VOLUME_MA_PERIOD      = 20    # Đã có sẵn — tính SMA baseline  [range: 10–50]
+VSA_VOLUME_MULTIPLIER = 1.5   # Ngưỡng Spike = x × SMA20       [range: 1.2–2.5]
+```
+
+---
+
+## 3. Logic phối hợp POI — Kiểm tra FVG M15 trước khi phát tín hiệu
+
+### 3.1 Tại sao cần kiểm tra FVG M15 trước?
+
+**Nguyên tắc SMC (Smart Money Concepts):**
+> Tín hiệu đảo chiều chỉ có giá trị cao khi xảy ra **TẠI** vùng thanh khoản (POI — Point of Interest).
+> Một Pinbar tại vùng random không có POI = Low Probability Setup.
+> Một Pinbar TẠI FVG M15 = High Probability Setup (Smart Money đã tạo ra imbalance đó).
+
+```
+❌ Pinbar KHÔNG tại FVG:
+    ...random price action...
+    [Pinbar xảy ra]  ← Không biết smart money có quan tâm không
+    → Win rate thấp
+
+✅ Pinbar TẠI FVG M15:
+    FVG được tạo trước (imbalance zone)
+    [Giá quay lại FVG]
+    [Pinbar xảy ra TẠI FVG bottom/top]  ← Smart money đã "đặt bẫy" tại đây
+    → Win rate cao hơn đáng kể
+```
+
+### 3.2 Thuật toán kiểm tra "nến M5 nằm trong FVG M15"
+
+**Điều kiện giao nhau (Intersection Test):**
+
+```
+FVG được định nghĩa bởi:
+    fvg["top"]    = Cạnh trên FVG (price level)
+    fvg["bottom"] = Cạnh dưới FVG (price level)
+    fvg["type"]   = "BULLISH" | "BEARISH"
+
+Nến M5 hiện tại (nến cuối đã đóng):
+    candle_high  = df_m5.iloc[-2]["high"]    ← Anti-Repainting: nến đã đóng
+    candle_low   = df_m5.iloc[-2]["low"]
+    candle_close = df_m5.iloc[-2]["close"]
+
+=== ĐIỀU KIỆN GIAO NHAU (Overlap) ===
+Nến M5 được coi là "nằm trong FVG" nếu:
+
+    overlap = (candle_low <= fvg["top"]) AND (candle_high >= fvg["bottom"])
+
+Logic này phát hiện mọi trường hợp nến M5 chạm vào FVG:
+    - Nến M5 hoàn toàn nằm trong FVG
+    - Nến M5 đâm vào FVG từ trên xuống
+    - Nến M5 đâm vào FVG từ dưới lên
+    - Nến M5 bao phủ toàn bộ FVG (nhịp di chuyển mạnh)
+```
+
+**Điều kiện hướng (Alignment):**
+
+```
+=== ALIGNMENT FILTER — Logic tổng hợp 3 tầng ===
+
+Tín hiệu BUY chỉ được phát khi:
+  (A) H1 Bias = "BUY"                              ← Tầng 1: The Compass
+  (B) FVG M15 type = "BULLISH" (unmitigated)       ← Tầng 2: POI âm tính với bias
+  (C) Hammer Pinbar được xác nhận tại FVG này      ← Tầng 3: The Trigger
+  (D) VSA Volume Spike được xác nhận               ← Tầng 3+: Bộ lọc VSA
+
+Tín hiệu SELL chỉ được phát khi:
+  (A) H1 Bias = "SELL"                             ← Tầng 1
+  (B) FVG M15 type = "BEARISH" (unmitigated)       ← Tầng 2
+  (C) Shooting Star Pinbar xác nhận tại FVG        ← Tầng 3
+  (D) VSA Volume Spike xác nhận                    ← Tầng 3+
+```
+
+### 3.3 Pseudocode hoàn chỉnh cho logic POI
+
+```python
+def _is_candle_in_fvg(candle_high, candle_low, fvg) -> bool:
+    """Kiểm tra nến M5 có giao nhau với FVG M15 không."""
+    return (candle_low <= fvg["top"]) and (candle_high >= fvg["bottom"])
+
+
+def _find_matching_fvg(candle_high, candle_low, candle_type, active_fvgs):
+    """
+    Tìm FVG M15 phù hợp với nến Pinbar M5.
+    
+    candle_type: "HAMMER" (cần BULLISH FVG) | "SHOOTING_STAR" (cần BEARISH FVG)
+    """
+    required_fvg_type = "BULLISH" if candle_type == "HAMMER" else "BEARISH"
+    
+    matching_fvgs = [
+        fvg for fvg in active_fvgs
+        if fvg["type"] == required_fvg_type
+        and _is_candle_in_fvg(candle_high, candle_low, fvg)
+    ]
+    
+    # Nếu có nhiều FVG match → ưu tiên FVG mới nhất (gần đây nhất)
+    if matching_fvgs:
+        return matching_fvgs[-1]   # deque được append theo thứ tự thời gian
+    return None
+```
+
+---
+
+## 4. Luồng xử lý tổng thể `check_m5_trigger()`
+
+### 4.1 Flowchart logic
+
+```
+check_m5_trigger(df_m5, active_fvgs, h1_bias)
+│
+├── [Guard 1] df_m5 đủ dài? (>= VOLUME_MA_PERIOD + 1 nến)
+│   └── Không → return NONE + log "Data M5 không đủ"
+│
+├── [Guard 2] h1_bias != NEUTRAL?
+│   └── Không → return NONE + log "H1 Bias = NEUTRAL, bỏ qua trigger"
+│
+├── [Guard 3] active_fvgs không rỗng?
+│   └── Không → return NONE + log "Không có FVG M15 active"
+│
+├── [Bước 1] Lấy nến M5 đã đóng gần nhất (Anti-Repainting)
+│   └── candle = df_m5.iloc[-2]   ← Nến đã đóng ("candle[-2]" = nến cuối ĐÓNG)
+│
+├── [Bước 2] Kiểm tra ATR Minimum Size
+│   └── nến_range < ATR_PINBAR_MIN_MULT × atr → return NONE + log "Nến quá nhỏ (spread noise)"
+│
+├── [Bước 3] Kiểm tra Pinbar Pattern
+│   ├── is_hammer()       → candle_type = "HAMMER"
+│   ├── is_shooting_star() → candle_type = "SHOOTING_STAR"
+│   └── Không phải Pinbar → return NONE + log "Không phải Pinbar pattern"
+│
+├── [Bước 4] Kiểm tra Alignment (Bias vs Pinbar type)
+│   ├── h1_bias="BUY" nhưng candle_type="SHOOTING_STAR" → return NONE + log "Counter-trend"
+│   └── h1_bias="SELL" nhưng candle_type="HAMMER" → return NONE + log "Counter-trend"
+│
+├── [Bước 5] Kiểm tra POI (FVG M15)
+│   └── matching_fvg = _find_matching_fvg(...) 
+│       └── None → return NONE + log "Pinbar nằm ngoài POI (FVG M15)"
+│
+├── [Bước 6] Kiểm tra VSA Volume
+│   ├── Tính vol_ma = SMA(tick_volume, VOLUME_MA_PERIOD)
+│   └── current_volume < vol_ma × VSA_VOLUME_MULTIPLIER
+│       └── return NONE + log "Volume thấp — Pinbar không xác nhận VSA"
+│
+└── [Output] Tất cả điều kiện pass:
+    ├── candle_type = "HAMMER"        → return "SIGNAL_BUY"
+    └── candle_type = "SHOOTING_STAR" → return "SIGNAL_SELL"
+    + log đầy đủ: fvg_matched, vol_ratio, candle_ratios
+```
+
+### 4.2 Constants cần thêm vào `config/settings.py`
+
+```python
+# ============================================================
+# VŨ KHÍ 3: M5 TRIGGER (Pinbar + VSA) — AI TUNABLE PARAMETERS
+# ============================================================
+PINBAR_WICK_RATIO      = 0.60   # Râu chính / tổng nến >= 60%        [range: 0.50–0.75]
+PINBAR_BODY_MAX_RATIO  = 0.30   # Thân + râu phụ mỗi cái <= 30%      [range: 0.20–0.40]
+ATR_PINBAR_MIN_MULT    = 0.50   # Nến quá nhỏ < 0.5×ATR14 → loại     [range: 0.30–1.00]
+VSA_VOLUME_MULTIPLIER  = 1.50   # Volume Spike = x × SMA20 volume     [range: 1.20–2.50]
+```
+
+---
+
+## 5. Rủi ro & Biện pháp Giảm thiểu
+
+| Rủi ro | Mô tả | Biện pháp |
+|--------|-------|-----------|
+| **Spike râu do spread giãn** | XAGUSD phút tin tức có spread 5–10x bình thường → tạo Pinbar "rởm" | Bộ lọc `ATR_PINBAR_MIN_MULT`: nến < 0.5×ATR → loại; bộ lọc VSA: volume thật phải đột biến |
+| **Doji bị nhầm Pinbar** | Body = 0, hai râu đều nhau → pass điều kiện LW/RANGE | Điều kiện `UW/RANGE <= PINBAR_BODY_MAX_RATIO`: đảm bảo râu phụ nhỏ, phân biệt Doji vs Pinbar |
+| **Volume M5 không chuẩn** | MT5 tick_volume ≠ real traded volume (chỉ là số lượng tick) | Dùng tick_volume là consistent cross-broker — relative comparison (ratio) đáng tin cậy hơn absolute value |
+| **FVG M15 không có trong cửa sổ M5** | FVG tạo quá lâu → df_m5 window (100 nến) không bao phủ | `FVG_MAX_AGE_CANDLES` đã lọc FVG cũ từ Vũ khí 2; không ảnh hưởng logic tìm kiếm M5 |
+| **Multiple matching FVGs** | Nến M5 nằm trong 2 FVG M15 cùng lúc | Ưu tiên FVG mới nhất (append vào deque theo thứ tự) — FVG mới = POI "tươi" hơn |
+| **NONE signal liên tục** | Bot không ra tín hiệu vì quá nhiều bộ lọc | Logger ghi rõ **lý do cụ thể** từng lần từ chối → TechLead có thể review và relax parameters |
+
+---
+
+## Báo cáo Tóm tắt (Theo AI_SOP_TEMPLATE Format)
+
+**Task 3.2: Phân tích Trigger M5 & VSA**
+
+* **Nội dung thay đổi, hoạt động:**
+  - `docs/walkthrough.md` — Bổ sung toàn bộ phần "Phase 3 — Task 3.2" gồm 5 mục phân tích: (1) Công thức toán học 3-ratio nhận diện Pinbar/Hammer vs Shooting Star, phân biệt nến thật vs nhiễu spread; (2) Thuật toán VSA Relative Volume với baseline SMA(20), phân loại 3 tiers (Spike/Normal/Dry-up) và ngưỡng 1.5× trung bình; (3) Logic giao nhau FVG M15 (overlap test + alignment filter 3 tầng H1-M15-M5); (4) Flowchart đầy đủ `check_m5_trigger()` với 6 bước lọc tuần tự và logger lý do từ chối; (5) Bảng rủi ro và biện pháp.
+  - `History.txt` — Ghi log Phase 3 Task 3.2.
+  - Git: Tạo và checkout nhánh `feature/phase3.2-m5-vsa-trigger` (sau khi merge Task 3.1 → main).
+  - **Chưa viết bất kỳ dòng code nào** — đang chờ "PROCEED" từ TechLead.
+
+* **Lý do chọn SMA(20) cho Volume baseline:**
+  - **Cân bằng lookback:** 20 nến M5 = ~100 phút — đủ "nhớ" bối cảnh volume 1-2 tiếng gần nhất mà không kéo sang phiên cũ. SMA(10) quá ngắn → dễ bị distort bởi 1 spike vừa xảy ra. SMA(50) quá dài → nhớ cả phiên trước, baseline không đại diện phiên hiện tại.
+  - **Industrial standard:** SMA(20) là window mặc định của Bollinger Bands, VWAP deviation — cộng đồng trading tính là "base market tempo" trong ~2 tiếng.
+  - **XAGUSD đặc thù:** Bạc thanh khoản thấp hơn Gold, volume fluctuation cao hơn → cần window đủ rộng để tránh false spike từ 1-2 tick bất thường.
+  - **Dễ audit:** `volume.rolling(20).mean()` rõ ràng, TechLead verify được bằng tính tay dễ dàng.
+
+* **Đề xuất cải tiến — Bộ lọc ATR tối thiểu cho Pinbar:**
+  - **CÓ — Đây là bộ lọc BẮT BUỘC với XAGUSD.** `ATR_PINBAR_MIN_MULT = 0.5` nghĩa là: nếu tổng chiều dài nến (RANGE) < 0.5×ATR14, nến bị loại ngay tại Bước 2 — trước cả khi tính Pinbar ratio. Lý do: Spread XAGUSD có thể giãn 5–10× lúc NFP hoặc FOMC. Nếu spread = 0.050 nhưng ATR14 = 0.250 → RANGE = 0.060 (chủ yếu là spread) → nến có râu 60% nhưng đó là spread, không phải price action. Bộ lọc ATR loại bỏ những "Pinbar ma" này hiệu quả.
+  - **Cải tiến nâng cao (Phase 5+):** Thêm kiểm tra `NEWS_BLOCK_MINUTES` — nếu Pinbar xảy ra trong vòng ±30 phút tin tức Đỏ → tự động skip (spread spike/news candle). Logic này kết hợp với News Filter trong `settings.py` (`NEWS_BLOCK_MINUTES = 30`).
+
+---
+
+*Tài liệu này được viết phục vụ TechLead Review trước khi bắt đầu viết code Task 3.2.*
+*Xem xét và gõ "PROCEED" để AI bắt đầu implementation `check_m5_trigger()`.*
+
+
+
