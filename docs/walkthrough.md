@@ -1,259 +1,328 @@
-# [Phase 1] Task 1.2 — Phân tích & Kế hoạch Triển khai: MT5 Data Pipeline
+# docs/walkthrough.md — Phân tích Kỹ thuật: Risk Management Module
 
-> **Tác giả:** Antigravity (AI Coder)
-> **Ngày:** 2026-03-05
-> **Nhánh:** `feature/task1.2-data-pipeline`
-> **Trạng thái:** 🟡 ĐANG CHỜ TECHLEAD DUYỆT — chưa viết code
-
----
-
-## 1. Tổng quan bài toán
-
-Module `core/data_pipeline.py` phải giải quyết 3 bài toán cốt lõi:
-
-| Bài toán | Mô tả | Rủi ro nếu xử lý sai |
-|---|---|---|
-| **Kết nối an toàn** | Đọc credentials từ `.env`, không hardcode | Lộ tài khoản FTMO lên Git |
-| **Kéo dữ liệu OHLCV** | M5/M15/H1, đủ cột `tick_volume` | Data thiếu → tín hiệu VSA sai |
-| **Xử lý Timezone** | Server FTMO trả về UTC; bot Việt Nam ở UTC+7 | Nhầm phiên giao dịch London/NY |
+**Phase 2 — Task 2.1**
+**Branch:** `feature/phase2-risk-management`
+**Author:** Antigravity (AI Coder)
+**Date:** 2026-03-05
+**Status:** 🟡 PENDING TechLead Review
 
 ---
 
-## 2. Phân tích thư viện `MetaTrader5` (Python)
+## Mục Lục
 
-### 2.1 Luồng khởi tạo bắt buộc
-
-```python
-# Bước 1: Khởi tạo terminal (bắt buộc trước mọi lệnh khác)
-mt5.initialize()
-
-# Bước 2: Login tài khoản
-mt5.login(login=int, password=str, server=str)
-
-# Bước 3: Kéo data
-mt5.copy_rates_from_pos(symbol, timeframe, start_pos, count)
-
-# Bước 4: Đóng kết nối (bắt buộc khi tắt bot)
-mt5.shutdown()
-```
-
-> ⚠️ **Cạm bẫy quan trọng:** Nếu gọi `mt5.copy_rates_from_pos()` khi chưa `initialize()` hay `login()`, hàm trả về `None` im lặng — KHÔNG raise exception. Phải kiểm tra `None` thủ công.
-
-### 2.2 Cấu trúc dữ liệu trả về
-
-`mt5.copy_rates_from_pos()` trả về một **numpy structured array** với các field:
-
-| Field | Kiểu | Mô tả |
-|---|---|---|
-| `time` | `int64` | **Unix timestamp (giây) — múi giờ UTC của server** |
-| `open` | `float64` | Giá mở nến |
-| `high` | `float64` | Giá cao nhất |
-| `low` | `float64` | Giá thấp nhất |
-| `close` | `float64` | Giá đóng nến |
-| `tick_volume` | `int64` | ✅ Tick count — chỉ báo sức mạnh cho VSA |
-| `spread` | `int32` | Spread tại thời điểm đóng nến |
-| `real_volume` | `int64` | Volume thực (thường = 0 với Forex CFD) |
-
-**Lưu ý VSA:** Với XAGUSD trên MT5/FTMO, `real_volume` hầu như luôn là 0. `tick_volume` là chỉ số proxy volume DUY NHẤT có giá trị — đây là cơ sở của toàn bộ phân tích VSA.
+1. [Phân tích Luật Daily Drawdown của FTMO](#1-phân-tích-luật-daily-drawdown-của-ftmo)
+2. [Bài toán: Bot Python biết Balance đầu ngày bằng cách nào?](#2-bài-toán-bot-python-biết-balance-đầu-ngày-bằng-cách-nào)
+3. [Phân tích Công thức Lot Size XAGUSD trên MT5](#3-phân-tích-công-thức-lot-size-xagusd-trên-mt5)
+4. [Kế hoạch Triển khai (Implementation Plan)](#4-kế-hoạch-triển-khai-implementation-plan)
+5. [Rủi ro & Biện pháp Giảm thiểu](#5-rủi-ro--biện-pháp-giảm-thiểu)
 
 ---
 
-## 3. Phân tích vấn đề Timezone (Quan trọng nhất)
+## 1. Phân tích Luật Daily Drawdown của FTMO
 
-### 3.1 Timezone của server FTMO
+### 1.1 Quy tắc chính thức của FTMO
 
-FTMO sử dụng **UTC+2 (mùa đông) / UTC+3 (mùa hè — DST)**. Tuy nhiên, `mt5.copy_rates_from_pos()` trả về cột `time` dưới dạng **Unix timestamp tuyệt đối** — không bị ảnh hưởng bởi timezone server.
+> **FTMO Normal Account — Daily Loss Limit: 5% initial_balance**
+> Tài khoản $100,000 → Tổng lỗ trong ngày không được vượt **$5,000**.
 
+**Điểm mấu chốt — cách FTMO tính "đầu ngày":**
+
+| Yếu tố | Chi tiết |
+|--------|---------|
+| **Mốc thời gian reset** | **00:00 CE(S)T** (Central European Standard/Summer Time) |
+| **Múi giờ CE(S)T** | UTC+1 (mùa đông) / UTC+2 (mùa hè) → tương đương ~06:00–07:00 Việt Nam |
+| **Cách tính drawdown** | `Daily_Drawdown = Opening_Day_Balance + Floating_PnL_All_Positions − Current_Equity` |
+| **Balance "đầu ngày" (SOD Balance)** | Là **Balance tại thời điểm 00:00 CE(S)T**, BẤT KỂ balance hiện tại bao nhiêu |
+| **Bao gồm cả vị thế đang mở?** | **CÓ** — Equity (balance + P&L unrealized) được so sánh, không chỉ balance |
+
+**Ví dụ thực tế:**
 ```
-Unix timestamp 1709596800 = 2026-03-05 08:00:00 UTC
-                          = 2026-03-05 15:00:00 UTC+7 (Hà Nội)
-                          = 2026-03-05 10:00:00 UTC+2 (FTMO Winter)
+Ngày 1 — 00:00 CEST: Balance = $102,000 (đã kiếm $2,000 hôm qua)
+→ SOD_Balance = $102,000
+Ngưỡng Hard-Stop = $102,000 × (1 - 0.045) = $97,410
+
+Nếu equity rơi xuống dưới $97,410 → BOT PHẢI DỪNG NGAY
 ```
 
-### 3.2 Chiến lược xử lý timezone đề xuất
-
-**Lựa chọn được chọn: Lưu trữ UTC, hiển thị UTC — KHÔNG convert sang local time.**
-
-**Lý do:**
-1. Bot chạy 24/7, logic trading hoàn toàn dựa trên giờ UTC (London 8am UTC, NY 1pm UTC).
-2. Tránh bug DST (Daylight Saving Time) khi Europa chuyển mùa hè/đông — offset thay đổi từ UTC+2 sang UTC+3.
-3. Dữ liệu lịch tin tức (ForexFactory) cũng dùng UTC.
-4. Pandas `pd.to_datetime(..., unit='s', utc=True)` xử lý đúng và minh bạch.
-
+**Dự án này dùng 4.5%** (thay vì 5% max của FTMO) theo thiết lập trong `settings.py`:
 ```python
-# ✅ Cách đúng — timezone-aware, lưu UTC
-df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
-
-# ❌ Cách sai — mất thông tin timezone, dễ gây bug phiên
-df['time'] = pd.to_datetime(df['time'], unit='s')
-```
-
-### 3.3 Bảng đối chiếu phiên giao dịch (UTC)
-
-| Phiên | Giờ UTC | Ý nghĩa |
-|---|---|---|
-| Tokyo | 00:00 – 08:00 | Ít volume, tránh giao dịch |
-| Frankfurt/London | 07:00 – 15:00 | **Phiên vàng — volume cao, SMC setup** |
-| New York | 13:00 – 21:00 | **Phiên quan trọng — volatility cao** |
-| Overlap LDN-NY | 13:00 – 15:00 | **Cơ hội tốt nhất** |
-
----
-
-## 4. Thiết kế kiến trúc `MT5DataPipeline`
-
-### 4.1 Sơ đồ class
-
-```
-MT5DataPipeline
-├── __init__(self)          — Load .env, setup logger
-├── connect(self) → bool    — initialize() + login() + validate
-├── fetch_data(symbol, timeframe, limit) → DataFrame | None
-│   ├── Gọi copy_rates_from_pos()
-│   ├── Convert numpy array → DataFrame
-│   ├── Convert time column (UTC-aware)
-│   ├── Validate cột và dữ liệu
-│   └── Return df[['time','open','high','low','close','tick_volume']]
-└── disconnect(self)        — mt5.shutdown()
-```
-
-### 4.2 Xử lý lỗi có tầng (Layered Error Handling)
-
-```
-Tầng 1: Kiểm tra env vars trước khi connect (fail-fast)
-         ↓ thiếu MT5_LOGIN/PASSWORD/SERVER → raise EnvironmentError
-Tầng 2: Kiểm tra mt5.initialize() thành công
-         ↓ thất bại → log lỗi, return False
-Tầng 3: Kiểm tra mt5.login() thành công
-         ↓ thất bại → log lỗi chi tiết (sai pass vs server không tồn tại), return False
-Tầng 4: Kiểm tra mt5.copy_rates_from_pos() không trả về None
-         ↓ None → log symbol/timeframe/error_code, return None
-Tầng 5: Validate DataFrame có đủ rows và đúng cột
-         ↓ thiếu → log warning, return None
-```
-
-### 4.3 Lý do dùng `copy_rates_from_pos` thay vì `copy_rates_range`
-
-| Hàm | Tham số | Dùng khi nào |
-|---|---|---|
-| `copy_rates_from_pos(symbol, tf, start, count)` | `start=0` = nến mới nhất, `count=N` | ✅ **Kéo N nến gần nhất** — phù hợp realtime bot |
-| `copy_rates_range(symbol, tf, date_from, date_to)` | Khoảng thời gian cụ thể | Backtest, kéo data lịch sử theo ngày |
-
-Bot Rabit FTMO hoạt động realtime → dùng `copy_rates_from_pos(symbol, tf, 0, limit)`.
-
----
-
-## 5. Kế hoạch triển khai chi tiết (5 bước)
-
-### Bước 1: Import & Constants
-```python
-import MetaTrader5 as mt5
-import pandas as pd
-from dotenv import load_dotenv
-import os, logging
-from config.settings import SYMBOL, TIMEFRAME_M5, TIMEFRAME_M15, TIMEFRAME_H1, SYSTEM_LOG_FILE
-```
-
-### Bước 2: Setup logging ra `logs/system.log`
-- Dùng `logging.FileHandler` với `RotatingFileHandler` để log không bị quá lớn.
-- Format: `[TIMESTAMP] [LEVEL] [MT5DataPipeline] message`
-
-### Bước 3: Implement `connect()`
-```python
-def connect(self) -> bool:
-    # 1. Load .env
-    # 2. Validate env vars (fail-fast)
-    # 3. mt5.initialize() — bắt lỗi terminal không mở
-    # 4. mt5.login() — bắt lỗi sai pass / sai server
-    # 5. Log thông tin tài khoản (account info) để verify
-    # 6. return True / False
-```
-
-### Bước 4: Implement `fetch_data()`
-```python
-def fetch_data(self, symbol: str, timeframe, limit: int) -> pd.DataFrame | None:
-    # 1. Gọi mt5.copy_rates_from_pos(symbol, timeframe, 0, limit)
-    # 2. Kiểm tra kết quả None → log lỗi chi tiết
-    # 3. Convert sang DataFrame
-    # 4. df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
-    # 5. Chỉ giữ cột cần thiết: time, open, high, low, close, tick_volume
-    # 6. Validate row count và kiểu dữ liệu
-    # 7. return df hoặc None
-```
-
-### Bước 5: Implement `disconnect()`
-```python
-def disconnect(self) -> None:
-    mt5.shutdown()
-    self.logger.info("MT5 connection closed gracefully.")
+MAX_DAILY_DRAWDOWN = 0.045  # Buffer an toàn 0.5% so với giới hạn cứng FTMO 5%
 ```
 
 ---
 
-## 6. Đề xuất cải tiến — Tối ưu tốc độ & Cache
+## 2. Bài toán: Bot Python biết Balance đầu ngày bằng cách nào?
 
-### 6.1 Vấn đề: Spam request lên MT5
+### 2.1 Thách thức
 
-Nếu `strategy_engine.py` gọi `fetch_data()` liên tục mỗi vài giây cho 3 timeframe (M5, M15, H1), sẽ có **~3 request/chu kỳ**. Với chu kỳ 5 giây = **36 request/phút** lên local terminal MT5 — không ảnh hưởng network nhưng tốn CPU.
+**Vấn đề cốt lõi:** MT5 **không cung cấp API trực tiếp** cho "Balance tại 00:00 CE(S)T".
+`mt5.account_info().balance` chỉ trả về balance *hiện tại* (real-time), không lưu mốc đầu ngày.
 
-### 6.2 Giải pháp: In-Memory Cache với TTL (Time-To-Live)
+### 2.2 Phân tích các Giải pháp
+
+#### ❌ Giải pháp 1 — Lấy từ `mt5.account_info()` trực tiếp
+```python
+# KHÔNG DÙNG ĐƯỢC cho mục đích này
+balance_now = mt5.account_info().balance  # Thay đổi liên tục theo từng lệnh đóng
+```
+**Vấn đề:** Balance hiện tại không phải balance đầu ngày — không tuân thủ luật FTMO.
+
+#### ⚠️ Giải pháp 2 — Lấy từ lịch sử giao dịch MT5 (Phức tạp)
+```python
+# mt5.history_deals_get() → duyệt toàn bộ lịch sử giao dịch trong ngày
+# → Tìm balance tại mốc 00:00 CE(S)T
+```
+**Vấn đề:** Phức tạp, tốn tài nguyên, cần xử lý timezone CE(S)T.
+
+#### ✅ Giải pháp 3 — File-based Persistence (ĐƯỢC CHỌN — Đơn giản, Chắc chắn)
+**Cơ chế:**
+1. Khi Bot khởi động lần đầu mỗi ngày CE(S)T → **ghi `sod_balance` và `sod_date` vào file JSON**.
+2. Mỗi chu kỳ tiếp theo → **đọc file JSON** để so sánh equity với SOD Balance.
+3. Mỗi khi ngày CE(S)T mới bắt đầu → **tự động reset** file JSON với balance mới.
 
 ```python
-from functools import lru_cache
-import time
-
-# Cache đơn giản với TTL tự kiểm tra
-_cache = {}
-_cache_ts = {}
-CACHE_TTL = {
-    mt5.TIMEFRAME_M5:  30,   # Cache M5  30 giây (nến 5 phút chưa đóng)
-    mt5.TIMEFRAME_M15: 60,   # Cache M15 60 giây
-    mt5.TIMEFRAME_H1:  120,  # Cache H1  2 phút
+# Cấu trúc file: logs/daily_state.json
+{
+    "sod_date": "2026-03-05",        # Ngày CE(S)T hiện tại
+    "sod_balance": 102345.67,        # Balance lúc bot khởi động đầu ngày
+    "recorded_at_utc": "2026-03-05T05:00:00Z"  # Timestamp thực lúc ghi
 }
-
-def fetch_data(self, symbol, timeframe, limit):
-    key = f"{symbol}_{timeframe}_{limit}"
-    ttl = CACHE_TTL.get(timeframe, 60)
-    if key in _cache and (time.time() - _cache_ts[key]) < ttl:
-        return _cache[key].copy()  # Trả về copy để tránh mutation
-    # ... kéo data mới
-    _cache[key] = df
-    _cache_ts[key] = time.time()
-    return df.copy()
 ```
 
-**Lợi ích:** Giảm 90% số lần gọi MT5 API trong chu kỳ ngắn. Đặc biệt quan trọng với H1 (nến 60 phút) — không cần kéo lại mỗi 5 giây.
+**Tại sao File JSON thay vì Database/Memory?**
+- **Persistence sau crash/restart:** Bot crash rồi restart vẫn nhớ SOD Balance — **quan trọng nhất**.
+- **Audit trail:** TechLead có thể kiểm tra thủ công bất kỳ lúc nào.
+- **Zero dependency:** Không cần thêm thư viện, không cần DB server.
 
-### 6.3 Cải tiến khác (Phase 2)
+**Logic xác định "đầu ngày mới" (CE(S)T):**
+```python
+import pytz
+from datetime import datetime
 
-| Cải tiến | Mô tả | Priority |
-|---|---|---|
-| **Reconnect tự động** | Khi `fetch_data` thất bại, thử `connect()` lại 3 lần trước khi raise | 🔴 Cao |
-| **Batch fetch** | Kéo 3 timeframe trong 1 lần gọi bằng threading | 🟡 Trung bình |
-| **Parquet cache** | Lưu data vào file `.parquet` → restart bot không cần kéo lại | 🟢 Thấp |
+CEST_TZ = pytz.timezone("Europe/Prague")  # Múi giờ FTMO chính thức
 
----
-
-## 7. Rủi ro và điểm cần TechLead review
-
-> [!WARNING]
-> **MT5 Terminal phải đang mở và đăng nhập** khi bot chạy. Nếu terminal bị đóng, `mt5.initialize()` sẽ thất bại ngay cả khi credentials đúng. Bot cần xử lý trường hợp này.
-
-> [!IMPORTANT]
-> **Không lưu `MT5_PASSWORD` vào bất kỳ log nào.** Logger phải mask password. Chỉ log `MT5_LOGIN` và `MT5_SERVER`.
-
-> [!NOTE]
-> **Symbol XAGUSD phải được enable trong Market Watch của MT5 Terminal.** Nếu symbol không visible, `copy_rates_from_pos` trả về `None`. Cần log thông báo rõ ràng cho user.
+def _get_cest_today() -> str:
+    """Trả về ngày hiện tại theo CE(S)T dạng 'YYYY-MM-DD'."""
+    now_utc = datetime.utcnow().replace(tzinfo=pytz.utc)
+    now_cest = now_utc.astimezone(CEST_TZ)
+    return now_cest.strftime("%Y-%m-%d")
+```
 
 ---
 
-## 8. File sẽ được tạo/chỉnh sửa
+## 3. Phân tích Công thức Lot Size XAGUSD trên MT5
 
-| File | Hành động | Mô tả |
-|---|---|---|
-| `core/data_pipeline.py` | ✏️ MODIFY | Implement class `MT5DataPipeline` hoàn chỉnh |
-| `History.txt` | ✏️ MODIFY | Ghi log Task 1.2 |
-| `docs/walkthrough.md` | ✏️ MODIFY | File phân tích này |
+### 3.1 Đặc điểm của XAGUSD (Silver/USD) trên MT5 FTMO
+
+XAGUSD là **CFD kim loại quý**, không phải Forex thuần túy. Điều này ảnh hưởng lớn đến cách tính lot.
+
+**Các thông số cần lấy từ `mt5.symbol_info("XAGUSD")`:**
+
+| Tham số | Tên trong MT5 | Giá trị điển hình | Ý nghĩa |
+|---------|--------------|-------------------|---------|
+| `trade_contract_size` | Contract size | **5000** oz/lot | 1 Lot = 5,000 oz bạc |
+| `trade_tick_size` | Tick size | **0.001** | Biến động nhỏ nhất = 0.001 USD/oz |
+| `trade_tick_value` | Tick value | **5.0** USD | Mỗi tick di chuyển → lãi/lỗ $5.0 |
+| `digits` | Digits | **3** | 3 chữ số thập phân (vd: 32.105) |
+| `volume_min` | Min Lot | **0.01** | Lệnh nhỏ nhất = 0.01 Lot |
+| `volume_max` | Max Lot | **50.0** | Lệnh lớn nhất = 50.0 Lot |
+| `volume_step` | Lot step | **0.01** | Bước tăng/giảm Lot |
+
+### 3.2 Hai Phương pháp Tính Lot — Phân tích So sánh
+
+#### Phương pháp A — Dùng `tick_value` và `tick_size` (ĐƯỢC CHỌN ✅)
+
+**Công thức cơ sở:**
+```
+Pip_Value_Per_Lot = (trade_tick_value / trade_tick_size) × point_size
+
+Lot_Size = (Equity × Risk%) / (SL_distance_points × Pip_Value_Per_Lot)
+```
+
+**Triển khai cụ thể cho XAGUSD:**
+```python
+# Lấy từ mt5.symbol_info()
+tick_value = symbol_info.trade_tick_value  # VD: 5.0 USD/tick
+tick_size  = symbol_info.trade_tick_size   # VD: 0.001
+
+# Giá trị mỗi point (= 1 digit) di chuyển, tính theo USD, cho 1 Lot
+point = symbol_info.point                 # = 0.001 cho XAGUSD (digits=3)
+value_per_point_per_lot = tick_value / tick_size * point
+# = 5.0 / 0.001 * 0.001 = 5.0 USD mỗi point, 1 Lot
+
+# Số tiền chấp nhận lỗ (risk amount)
+risk_amount = equity * RISK_PER_TRADE       # VD: $102,000 × 0.5% = $510
+
+# Tính lot
+raw_lot = risk_amount / (sl_distance_points * value_per_point_per_lot)
+
+# Làm tròn theo volume_step
+lot_step = symbol_info.volume_step          # VD: 0.01
+lot_size = round(raw_lot / lot_step) * lot_step
+```
+
+**Ví dụ số học:**
+```
+Equity        = $100,000
+RISK_PER_TRADE= 0.5%   → Risk Amount = $500
+SL Distance   = 200 points (= 0.200 USD trên XAGUSD)
+
+tick_value    = 5.0 USD, tick_size = 0.001, point = 0.001
+value_per_pt  = 5.0 / 0.001 × 0.001 = 5.0 USD/point/lot
+
+raw_lot = $500 / (200 × 5.0) = $500 / $1,000 = 0.50 Lot
+
+Kiểm tra: 0.50 Lot × 200 points × 5.0 USD/point = $500 ✅
+```
+
+#### Phương pháp B — Dùng `contract_size` (Tham chiếu thêm)
+
+```
+Dollar_Per_Point_Per_Lot = contract_size × point / account_currency_rate
+Lot = risk_amount / (sl_points × dollar_per_point)
+```
+
+**Vì sao KHÔNG chọn phương pháp B?**
+Phương pháp B yêu cầu lấy tỷ giá quy đổi nếu Base Currency không phải USD. Trong trường hợp XAGUSD, quote currency là USD nên đơn giản hơn — nhưng `tick_value` từ MT5 **đã tự động tính sẵn trong đơn vị tiền tệ của tài khoản** (USD), bao gồm cả mọi quy đổi. Dùng `tick_value` an toàn hơn và ít hardcode hơn.
+
+### 3.3 Ràng buộc Min/Max Lot
+
+```python
+# Clamp theo giới hạn sàn — BẮT BUỘC
+lot_size = max(symbol_info.volume_min, lot_size)   # Tối thiểu 0.01
+lot_size = min(symbol_info.volume_max, lot_size)   # Tối đa 50.0
+lot_size = round(lot_size / lot_step) * lot_step   # Làm tròn step
+
+# Cảnh báo nếu bị clamp
+if raw_lot > symbol_info.volume_max:
+    logger.warning(f"Lot bị cap tại max {symbol_info.volume_max} — SL quá gần?")
+if raw_lot < symbol_info.volume_min:
+    logger.warning(f"Lot bị cap tại min {symbol_info.volume_min} — Equity quá nhỏ hoặc SL quá xa?")
+```
 
 ---
 
-*Phân tích hoàn tất. Đang chờ TechLead gõ **"PROCEED"** để bắt đầu viết code.*
+## 4. Kế hoạch Triển khai (Implementation Plan)
+
+### 4.1 Cấu trúc Class `RiskManager`
+
+```
+core/risk_manager.py
+└── class RiskManager
+    ├── __init__(symbol_info, logger)
+    ├── load_or_init_daily_state(current_balance) → float  [SOD Balance]
+    ├── check_hard_stop(current_equity)           → bool   [True = khóa bot]
+    └── calculate_lot_size(sl_distance_points, current_equity) → float
+```
+
+### 4.2 Chi tiết từng Hàm
+
+#### `load_or_init_daily_state(current_balance) → float`
+- Đọc file `logs/daily_state.json`.
+- Nếu file không tồn tại HOẶC `sod_date` khác ngày CE(S)T hiện tại → ghi file mới với `current_balance`.
+- Trả về `sod_balance` (luôn là balance đầu ngày CE(S)T).
+
+#### `check_hard_stop(current_equity) → bool`
+```
+drawdown_pct = (sod_balance - current_equity) / sod_balance
+if drawdown_pct >= MAX_DAILY_DRAWDOWN:
+    CRITICAL log
+    return True  # Khóa bot
+return False
+```
+
+#### `calculate_lot_size(sl_distance_points, current_equity) → float`
+```
+risk_amount = current_equity × RISK_PER_TRADE
+value_per_pt = tick_value / tick_size × point
+raw_lot = risk_amount / (sl_distance_points × value_per_pt)
+lot_size = clamp(raw_lot, vol_min, vol_max, vol_step)
+return lot_size
+```
+
+### 4.3 Dependency & Import
+
+```python
+# core/risk_manager.py sẽ import từ:
+from config.settings import (
+    RISK_PER_TRADE,       # 0.005
+    MAX_DAILY_DRAWDOWN,   # 0.045
+)
+from utils.logger import system_logger, trade_logger
+import MetaTrader5 as mt5
+import json
+import pytz
+from datetime import datetime
+from pathlib import Path
+```
+
+### 4.4 Tích hợp vào Vòng lặp Chính (main.py — Phase 2)
+
+```python
+# Khởi động bot:
+risk_manager = RiskManager(symbol="XAGUSD")
+sod_balance = risk_manager.load_or_init_daily_state(current_balance)
+
+# Mỗi chu kỳ (vd: mỗi 5 giây):
+account = pipeline.get_account_info()
+if risk_manager.check_hard_stop(account["equity"]):
+    logger.critical("HARD STOP TRIGGERED — BOT ĐÓNG TOÀN BỘ VỊ THẾ VÀ DỪNG")
+    # → Gọi hàm đóng lệnh khẩn cấp
+    break
+
+# Trước khi đặt lệnh:
+lot = risk_manager.calculate_lot_size(
+    sl_distance_points=sl_pts,
+    current_equity=account["equity"]
+)
+```
+
+---
+
+## 5. Rủi ro & Biện pháp Giảm thiểu
+
+### 5.1 Slippage Risk — Lỗ Vượt 4.5%
+
+> **Câu hỏi:** Slippage có thể làm khoản lỗ thực tế vượt mức 4.5% không?
+
+**Câu trả lời: CÓ — và đây là rủi ro thực tế.**
+
+| Kịch bản | Chi tiết |
+|---------|---------|
+| **Slippage thị trường** | Tin tức đột ngột (NFP, Fed) → giá nhảy vọt qua SL → lệnh đóng tại giá kém hơn SL |
+| **Gap qua cuối tuần** | Thị trường mở cửa thứ Hai với gap lớn → SL không khả dụng |
+| **Low liquidity** | XAGUSD kém thanh khoản ngoài giờ London/NY → spread giãn rộng, slippage cao |
+
+**Biện pháp giảm thiểu được thiết kế trong RiskManager:**
+
+1. **Buffer 0.5% trong Hard Stop:** FTMO giới hạn 5% nhưng ta Hard Stop tại 4.5% — tạo bộ đệm $500 cho mỗi $100,000 để hấp thụ slippage.
+
+2. **Pre-trade Check:** Trước khi đặt lệnh MỚI, kiểm tra nếu drawdown hiện tại đã > 4.0% → từ chối mở lệnh mới (ngay cả khi chưa đạt 4.5%).
+
+3. **FORCE_CLOSE_HOUR (22:00 UTC):** Đóng hết lệnh trước 22:00 UTC → tránh gap overnight, slippage phiên châu Á ít thanh khoản.
+
+4. **FRIDAY_CLOSE_HOUR (20:00 UTC):** Đóng hết trước 20:00 UTC thứ Sáu → phòng gap cuối tuần.
+
+5. **ATR-calibrated SL:** SL tính theo ATR nhân hệ số 1.5 → SL không quá chặt, giảm xác suất bị slippage đánh úp.
+
+6. **Max Lot Clamp:** `calculate_lot_size()` cắt cứng tại `volume_max` của sàn → tránh tình huống lỗi tràn tính toán ra lot khổng lồ.
+
+7. **(Nâng cao — Phase 3+):** Implement `max_risk_per_trade_buffer`: Nếu 1 lệnh tính lỗ full SL sẽ làm drawdown > 3.5% → từ chối thêm — chặn "one-shot knockout".
+
+---
+
+## Tóm tắt
+
+| Hạng mục | Quyết định |
+|---------|-----------|
+| SOD Balance tracking | File JSON persistence — `logs/daily_state.json` |
+| Timezone chuẩn | `Europe/Prague` (CE(S)T) — múi giờ FTMO chính thức |
+| Công thức Lot Size | `tick_value / tick_size × point` — lấy từ `mt5.symbol_info()` live |
+| Hard Stop threshold | 4.5% (buffer 0.5% so với FTMO 5%) |
+| Risk per trade | 0.5% equity |
+| Slippage protection | 4.5% buffer + Force close 22:00 UTC + ATR SL |
+
+---
+
+*Tài liệu này được viết phục vụ TechLead Review trước khi bắt đầu viết code.*
+*Xem xét và gõ "PROCEED" để AI bắt đầu implementation.*
