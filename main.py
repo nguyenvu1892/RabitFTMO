@@ -36,9 +36,11 @@ from config.settings import (
     TIMEFRAME_M5,
     TIMEFRAME_H1,
     TIMEFRAME_M15,
+    CANDLE_COUNT_M5,
     CANDLE_COUNT_H1,
     CANDLE_COUNT_M15,
 )
+
 
 
 # ============================================================
@@ -272,6 +274,36 @@ def main():
             print("   ⚪ NEUTRAL — Chưa có bias H1 → Không vào lệnh dù có FVG.")
         else:
             print("   ⚠️  CONFLICT — H1 Bias và FVG M15 ngược chiều → Bỏ qua, chờ alignment.")
+
+    # --- Bước 14: VŨ KHÍ 3 — M5 Trigger (Pinbar & VSA) ---
+    print(f"\n{'-' * 70}")
+    print("⚔️  VŨ KHÍ 3: M5 Trigger (Pinbar & VSA)")
+    print("-" * 70)
+
+    # Nếu không có bias hoặc không có FVG, skip fetch M5 cho nhẹ
+    if h1_bias == "NEUTRAL" or not active_fvgs:
+        print("\n   ℹ️  Bias H1 Neutral hoặc không có FVG M15 mở → Bỏ qua M5 Trigger.")
+    else:
+        system_logger.info(f"main | 📥 Kéo {CANDLE_COUNT_M5} nến M5 {SYMBOL}...")
+        df_m5_trigger = pipeline.fetch_data(
+            symbol=SYMBOL,
+            timeframe=TIMEFRAME_M5,
+            limit=CANDLE_COUNT_M5,
+        )
+
+        if df_m5_trigger is not None:
+            print(f"\n   ✅ M5:  {len(df_m5_trigger)} nến")
+            signal = engine.check_m5_trigger(df_m5_trigger, active_fvgs, h1_bias)
+
+            if signal == "NONE":
+                print(f"      → M5 Signal: ⚪ {signal} (Không có tín hiệu Pinbar hợp lệ hoặc không có xác nhận VSA)")
+            else:
+                emoji = "🟢" if signal == "SIGNAL_BUY" else "🔴"
+                print(f"\n   {emoji} 🎯 TÍN HIỆU VÀO LỆNH (M5 TRIGGER):")
+                print(f"      → M5 Signal: {signal} ")
+                print(f"      (Pinbar hợp lệ, chạm POI, + VSA Volume Spike xác nhận!)")
+        else:
+             print("\n   ❌ Không kéo được dữ liệu M5 phục vụ Trigger.")
 
     print("\n" + "=" * 70)
     print("✅ PHASE 3 STRATEGY ENGINE — SMOKE TEST HOÀN TẤT")

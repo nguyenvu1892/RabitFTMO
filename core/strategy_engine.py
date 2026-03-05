@@ -44,6 +44,12 @@ from config.settings import (
     FVG_MAX_POOL_SIZE,
     FVG_MIN_GAP_MULTIPLE,
     FVG_MITIGATION_LEVEL,
+    # Vũ khí 3 — M5 Trigger (Pinbar + VSA)
+    PINBAR_WICK_RATIO,
+    PINBAR_BODY_MAX_RATIO,
+    ATR_PINBAR_MIN_MULT,
+    VSA_VOLUME_MULTIPLIER,
+    VOLUME_MA_PERIOD,
 )
 
 # Lấy logger từ hệ thống (đã khởi tạo sẵn bởi utils/logger.py)
@@ -418,8 +424,180 @@ class StrategyEngine:
         return active
 
     # -----------------------------------------------------------------------
+    # VŨ KHÍ 3: M5 TRIGGER (PINBAR + VSA)
+    # -----------------------------------------------------------------------
+
+    def check_m5_trigger(
+        self,
+        df_m5: pd.DataFrame,
+        active_fvgs: list[FVGDict],
+        h1_bias: str
+    ) -> str:
+        """
+        Kiểm tra nến M5 hiện tại có phải là tín hiệu vào lệnh (Trigger) hợp lệ không.
+
+        Luồng xử lý (6 bước lọc):
+            1. Guard: Check H1 Bias và Active FVGs.
+            2. Lấy nến M5 đã đóng gần nhất (Anti-Repainting).
+            3. Tính ATR14, loại bỏ Pinbar quá nhỏ do spread giãn.
+            4. Phân tích 3-Ratio System (Wick, Body) để xác định Hammer / Shooting Star.
+            5. Kiểm tra Alignment (Bias ↔ Pinbar type) và POI (nến M5 nằm trong FVG hợp lệ).
+            6. Phân tích VSA (Volume Spike >= 1.5x SMA20) để xác nhận Smart Money.
+
+        Args:
+            df_m5 (pd.DataFrame): DataFrame khung M5.
+            active_fvgs (list[FVGDict]): Danh sách FVG M15 đang active (được trả về từ VŨ KHÍ 2).
+            h1_bias (str): 'BUY', 'SELL', 'NEUTRAL' (được trả về từ VŨ KHÍ 1).
+
+        Returns:
+            str: 'SIGNAL_BUY' | 'SIGNAL_SELL' | 'NONE'
+        """
+        # --- Guard 1: Yêu cầu dữ liệu M5 đủ tính VSA (SMA20) và nến đóng ---
+        min_m5_candles = VOLUME_MA_PERIOD + 1
+        if df_m5 is None or len(df_m5) < min_m5_candles:
+            logger.warning(
+                f"StrategyEngine.check_m5_trigger | "
+                f"Data M5 không đủ ({len(df_m5) if df_m5 is not None else 0}). "
+                f"Cần >= {min_m5_candles} nến. Trả về NONE."
+            )
+            return "NONE"
+
+        # --- Guard 2: H1 Bias = NEUTRAL, hoặc không có FVG M15 mở ---
+        if h1_bias == "NEUTRAL":
+            logger.debug("StrategyEngine.check_m5_trigger | H1 Bias = NEUTRAL, bỏ qua trigger.")
+            return "NONE"
+
+        if not active_fvgs:
+            logger.debug("StrategyEngine.check_m5_trigger | Không có FVG M15 active, bỏ qua trigger.")
+            return "NONE"
+
+        # --- Bước 1: Anti-Repainting — Lấy nến M5 cuối cùng ĐÃ ĐÓNG ---
+        # index -1 là nến đang mở. index -2 là nến ĐÃ ĐÓNG gần nhất.
+        trigger_candle = df_m5.iloc[-2]
+        time_m5 = trigger_candle["time"]
+
+        # Để tính SMA volume an toàn (anti-repainting), ta lấy -VOLUME_MA_PERIOD nến ĐÃ ĐÓNG
+        df_m5_safe = df_m5.iloc[:-1].reset_index(drop=True)
+        # --- Tính ATR14 cho nến đóng ---
+        atr_value = self._calculate_atr(df_m5_safe, ATR_PERIOD)
+
+        if atr_value is None or atr_value == 0:
+            logger.warning(
+                f"StrategyEngine.check_m5_trigger | [{time_m5}] "
+                f"Chưa đủ data tính ATR M5. Trả về NONE."
+            )
+            return "NONE"
+
+        # Tách thuộc tính nến
+        open_p  = float(trigger_candle["open"])
+        high_p  = float(trigger_candle["high"])
+        low_p   = float(trigger_candle["low"])
+        close_p = float(trigger_candle["close"])
+        vol     = float(trigger_candle["tick_volume"])
+
+        c_range = high_p - low_p
+
+        # --- Bước 2: Kiểm tra Size (lọc Spread noise) ---
+        if c_range < ATR_PINBAR_MIN_MULT * atr_value:
+            logger.debug(
+                f"StrategyEngine.check_m5_trigger | [{time_m5}] Loại Pinbar rởm. "
+                f"Range={c_range:.3f} < {ATR_PINBAR_MIN_MULT:.2f} × ATR({atr_value:.3f})."
+            )
+            return "NONE"
+
+        # --- Bước 3: Toán học 3-Ratio (Pinbar Pattern) ---
+        uw = high_p - max(open_p, close_p)
+        lw = min(open_p, close_p) - low_p
+        body = abs(close_p - open_p)
+
+        is_hammer = (
+            (lw / c_range >= PINBAR_WICK_RATIO) and
+            (uw / c_range <= PINBAR_BODY_MAX_RATIO) and
+            (body / c_range <= PINBAR_BODY_MAX_RATIO)
+        )
+
+        is_shooting_star = (
+            (uw / c_range >= PINBAR_WICK_RATIO) and
+            (lw / c_range <= PINBAR_BODY_MAX_RATIO) and
+            (body / c_range <= PINBAR_BODY_MAX_RATIO)
+        )
+
+        if is_hammer:
+            candle_type = "HAMMER"
+        elif is_shooting_star:
+            candle_type = "SHOOTING_STAR"
+        else:
+            return "NONE" # Không phải Pinbar
+
+        # --- Bước 4: Kiểm tra Alignment (Bias H1 vs Pinbar type) ---
+        if h1_bias == "BUY" and candle_type != "HAMMER":
+            logger.debug(f"StrategyEngine.check_m5_trigger | [{time_m5}] Counter-trend ({h1_bias} vs {candle_type}).")
+            return "NONE"
+        if h1_bias == "SELL" and candle_type != "SHOOTING_STAR":
+            logger.debug(f"StrategyEngine.check_m5_trigger | [{time_m5}] Counter-trend ({h1_bias} vs {candle_type}).")
+            return "NONE"
+
+        # --- Bước 5: Kiểm tra POI (Giao thoa M5 ↔ FVG M15) ---
+        matching_fvg = self._find_matching_fvg(high_p, low_p, candle_type, active_fvgs)
+        if matching_fvg is None:
+            logger.debug(
+                f"StrategyEngine.check_m5_trigger | [{time_m5}] "
+                f"{candle_type} Pinbar hợp lệ NHƯNG xảy ra ngoài vùng FVG M15 (random zone)."
+            )
+            return "NONE"
+
+        # --- Bước 6: Phân tích VSA (Volume Spike) ---
+        # Tính SMA20 Volume (chỉ lấy nến đã đóng, tối đa 20 nến tính từ nến trigger)
+        vol_series_safe = df_m5_safe["tick_volume"].tail(VOLUME_MA_PERIOD)
+        vol_ma = vol_series_safe.mean()
+
+        if vol_ma == 0:
+            return "NONE" # Tránh div/0
+
+        vol_ratio = vol / vol_ma
+
+        if vol_ratio < VSA_VOLUME_MULTIPLIER:
+            logger.info(
+                f"StrategyEngine.check_m5_trigger | [{time_m5}] {candle_type} TẠI FVG {matching_fvg['time']} BỊ TỪ CHỐI "
+                f"do VSA Volume thấp: {vol_ratio:.2f}x SMA20 (yêu cầu >= {VSA_VOLUME_MULTIPLIER:.2f}x)."
+            )
+            return "NONE"
+
+        # === ĐÃ PASS TẤT CẢ ==
+        signal = "SIGNAL_BUY" if candle_type == "HAMMER" else "SIGNAL_SELL"
+
+        logger.info(
+            f"StrategyEngine.check_m5_trigger | [{time_m5}] 🎯 {signal} TRIGGERED! "
+            f"H1={h1_bias} | M15_FVG={matching_fvg['type']}@{matching_fvg['time']} | "
+            f"M5_{candle_type} (VSA confirmed: Vol={vol_ratio:.2f}x SMA20)."
+        )
+
+        return signal
+
+    # -----------------------------------------------------------------------
     # PRIVATE HELPERS
     # -----------------------------------------------------------------------
+
+    def _is_candle_in_fvg(self, candle_high: float, candle_low: float, fvg: FVGDict) -> bool:
+        """Kiểm tra nến (M5) có giao cắt (overlap) với FVG không."""
+        return (candle_low <= fvg["top"]) and (candle_high >= fvg["bottom"])
+
+    def _find_matching_fvg(self, candle_high: float, candle_low: float, candle_type: str, active_fvgs: list[FVGDict]) -> FVGDict | None:
+        """
+        Tìm FVG phù hợp với Pinbar.
+        Mua (HAMMER) cần chạm Bullsih FVG. Bán (SHOOTING_STAR) cần chạm Bearish FVG.
+        """
+        required_fvg_type = "BULLISH" if candle_type == "HAMMER" else "BEARISH"
+
+        matching_fvgs = [
+            fvg for fvg in active_fvgs
+            if fvg["type"] == required_fvg_type
+            and self._is_candle_in_fvg(candle_high, candle_low, fvg)
+        ]
+
+        if matching_fvgs:
+            return matching_fvgs[-1] # Ưu tiên FVG mới nhất (gần đây nhất)
+        return None
 
     def _is_swing_high(self, df: pd.DataFrame, i: int, period: int) -> bool:
         """

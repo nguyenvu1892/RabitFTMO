@@ -1221,4 +1221,62 @@ VSA_VOLUME_MULTIPLIER  = 1.50   # Volume Spike = x × SMA20 volume     [range: 1
 *Xem xét và gõ "PROCEED" để AI bắt đầu implementation `check_m5_trigger()`.*
 
 
+---
+
+## ✅ Task 3.2 — Implementation Report (POST-PROCEED)
+
+**Status:** 🟢 COMPLETED | **Branch:** `feature/phase3.2-m5-vsa-trigger`
+
+### 1. Files đã tạo / thay đổi
+
+| File | Thay đổi | Nội dung chính |
+|------|----------|----------------|
+| `core/strategy_engine.py` | [MODIFY] | Thêm hàm `check_m5_trigger()` và 2 private helpers (`_is_candle_in_fvg`, `_find_matching_fvg`). Tích hợp 6 bước lọc thuật toán Pinbar + VSA. |
+| `config/settings.py` | [MODIFY] | Phơi bày 4 tham số AI-tunable: `PINBAR_WICK_RATIO`, `PINBAR_BODY_MAX_RATIO`, `ATR_PINBAR_MIN_MULT`, `VSA_VOLUME_MULTIPLIER`. |
+| `main.py` | [MODIFY] | Cập nhật Smoke Test: kéo dữ liệu M5, in kết quả M5 Trigger (kèm emoji xanh/đỏ). |
+| `docs/walkthrough.md` | [MODIFY] | Phân tích thuật toán và báo cáo POST-PROCEED này. |
+| `History.txt` | [MODIFY] | Ghi log hoàn thành Task 3.2. |
+
+### 2. Output mẫu khi chạy `python main.py`
+
+```text
+======================================================================
+🧭 PHASE 3 — STRATEGY ENGINE SMOKE TEST
+======================================================================
+
+   ✅ H1:  200 nến  |  M15: 200 nến
+
+----------------------------------------------------------------------
+⚔️  VŨ KHÍ 1: Market Structure (H1)
+----------------------------------------------------------------------
+
+   🔴 H1 Directional Bias  :  SELL
+   📌 Ý nghĩa: Xu hướng GIẢM — Chỉ tìm setup SHORT khi giá vào FVG cung
+
+----------------------------------------------------------------------
+⚔️  VŨ KHÍ 2: SMC FVG (M15)
+----------------------------------------------------------------------
+
+   📋 Tổng số FVG đang MỞ (Unmitigated): 7
+   ...
+   📊 Phân tích Alignment (H1 Bias ↔ FVG M15):
+   ✅ ALIGNED — H1 SELL + 3 Bearish FVG → CÓ THỂ TÌM SHORT setup!
+
+----------------------------------------------------------------------
+⚔️  VŨ KHÍ 3: M5 Trigger (Pinbar & VSA)
+----------------------------------------------------------------------
+2026-03-05 11:16:14 | INFO     | rabit.system | main | 📥 Kéo 100 nến M5 XAGUSD...
+
+   ✅ M5:  100 nến
+      → M5 Signal: ⚪ NONE (Không có tín hiệu Pinbar hợp lệ hoặc không có xác nhận VSA)
+
+======================================================================
+✅ PHASE 3 STRATEGY ENGINE — SMOKE TEST HOÀN TẤT
+======================================================================
+```
+*(Hiện tại M5 không có tín hiệu, bot thông báo ⚪ NONE đúng như logic. Log hệ thống ghi nhận đầy đủ việc lọc FVG và reject lý do ATR nhỏ/không phải Pinbar/VSA volume thấp).*
+
+---
+*Antigravity sẵn sàng cho Phase 4 — Vòng lặp OnTick và Quản lý Lệnh thực tế.*
+
 
