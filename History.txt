@@ -33,5 +33,5 @@ FORMAT: [Phase X] Task X.X <Tên Task> - Lý do: <Giải thích>
       core/data_pipeline.py  — Implement class MT5DataPipeline (connect, fetch_data, disconnect)
       docs/walkthrough.md    — Phân tích kiến trúc, timezone, xử lý lỗi
   - Người thực thi: Antigravity (AI Coder)
-  - TechLead review: ĐANG CHỜ DUYỆT
+  - TechLead review: ĐÃ DUYỆT — Merged vào main (commit bd4b946)
 ------------------------------------------------------------
