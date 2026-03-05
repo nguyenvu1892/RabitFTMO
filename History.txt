@@ -35,3 +35,13 @@ FORMAT: [Phase X] Task X.X <Tên Task> - Lý do: <Giải thích>
   - Người thực thi: Antigravity (AI Coder)
   - TechLead review: ĐÃ DUYỆT — Merged vào main (commit bd4b946)
 ------------------------------------------------------------
+[Phase 1] Task 1.3 Smoke Test + get_account_info()
+  - Ngày  : 2026-03-05
+  - Branch : feature/task1.3-smoke-test
+  - Lý do  : Kiểm chứng Data Pipeline thực tế và chuẩn bị nguyên liệu Balance/Equity cho Phase 2
+  - Files thay đổi:
+      main.py               — Smoke test: connect, fetch 5 nến M5, print DataFrame + tick_volume
+      core/data_pipeline.py — Thêm get_account_info() trả về balance, equity, margin_free
+  - Người thực thi: Antigravity (AI Coder)
+  - TechLead review: ĐANG CHỜ DUYỆT
+------------------------------------------------------------

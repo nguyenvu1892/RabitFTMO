@@ -23,9 +23,9 @@ Chỉ sau khi `git push origin main` thành công và được xác nhận, Anti
 [... Giữ nguyên như cũ ...]
 
 **IV. QUY CHUẨN BÁO CÁO HOẠT ĐỘNG (BẮT BUỘC TRONG MỌI PHẢN HỒI)**
-Bất cứ khi nào ngươi hoàn thành một thay đổi trên dự án, hoặc thực hiện một hoạt động code/fix bug nào, ngươi BẮT BUỘC phải trình bày báo cáo và ghi vào 1 file walkthrough.md trong thư mục docs/ theo đúng định dạng chính xác sau đây:
+Bất cứ khi nào ngươi hoàn thành một thay đổi trên dự án, hoặc thực hiện một hoạt động code/fix bug nào, ngươi BẮT BUỘC phải trình bày báo cáo tóm tắt nhưng phải đầy đủ đầy đủ để người đọc hiểu được vấn đề và ghi vào 1 file walkthrough.md trong thư mục docs/ theo đúng định dạng chính xác sau đây:
 
-**Task [Số thứ tự Task]: [Tiêu đề Task]**
+**Task [Số thứ tự Task hiện tại. VD: Task 1.2]: [Tiêu đề Task hiện tại]**
 * **Nội dung thay đổi/hoạt động:** [Mô tả chi tiết xác đáng những file nào đã sửa, dòng code nào đã thêm]
 * **Lý do:** [Giải thích tại sao lại viết logic code như vậy dựa trên kiến thức Trading/SMC/VSA]
 * **Đề xuất cải tiến:** [Phân tích góc nhìn của AI để chỉ ra những lỗ hổng tiềm ẩn hoặc ý tưởng nâng cấp module này cho xịn hơn trong tương lai]
