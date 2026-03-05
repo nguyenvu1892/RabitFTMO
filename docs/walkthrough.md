@@ -326,3 +326,19 @@ lot = risk_manager.calculate_lot_size(
 
 *Tài liệu này được viết phục vụ TechLead Review trước khi bắt đầu viết code.*
 *Xem xét và gõ "PROCEED" để AI bắt đầu implementation.*
+
+---
+
+## Bug Fix — Task 2.1.1: Thiếu khai báo `pytz` trong `requirements.txt`
+
+**Date:** 2026-03-05 | **Commit:** `42cf2aa` | **Branch:** `main` (hotfix)
+
+**Task 2.1.1: Fix ModuleNotFoundError — pytz missing**
+
+* **Nội dung thay đổi/hoạt động:**
+  - `requirements.txt` — Thêm dòng `pytz>=2023.3` vào Tầng 2 (Security/Utilities), kèm comment giải thích dùng cho RiskManager tính timezone `Europe/Prague` (CE(S)T).
+  - `History.txt` — Ghi log bug fix và note rút kinh nghiệm.
+
+* **Lý do:** `core/risk_manager.py` import `pytz` để xác định ngày CE(S)T (múi giờ FTMO) nhưng thư viện này không có sẵn trong stdlib Python và chưa được khai báo vào `requirements.txt`. Khi người dùng cài môi trường mới từ `pip install -r requirements.txt` sẽ thiếu `pytz` → `ModuleNotFoundError` ngay khi import RiskManager. Lỗi xuất hiện ngay lần chạy đầu tiên sau merge.
+
+* **Đề xuất cải tiến:** Thiết lập CI pre-commit hook chạy `pip check` hoặc `pipreqs --diff` để tự động phát hiện thư viện được import trong code nhưng chưa có trong `requirements.txt` — tránh lặp lại bug tương tự ở các Phase sau.
