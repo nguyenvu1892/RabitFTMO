@@ -71,3 +71,11 @@ FVG_IMPULSE_BODY_RATIO  = 0.6  # Tỷ lệ thân/chiều dài nến B (Impulse).
 FVG_MITIGATION_LEVEL    = 0.5  # % FVG cần bị lấp để coi là Mitigated. 0.5 = chuẩn SMC 50% [range: 0.0–1.0]
 FVG_MAX_AGE_CANDLES     = 100  # Tuổi thọ tối đa của FVG tính bằng số nến M15 (~25 giờ) [range: 50–200]
 FVG_MAX_POOL_SIZE       = 50   # Số FVG active tối đa trong deque — giới hạn RAM [range: 20–100]
+
+# ============================================================
+# VŨ KHÍ 3: M5 TRIGGER (Pinbar + VSA) — AI TUNABLE PARAMETERS
+# ============================================================
+PINBAR_WICK_RATIO      = 0.60   # Râu chính / tổng nến >= 60%        [range: 0.50–0.75]
+PINBAR_BODY_MAX_RATIO  = 0.30   # Thân + râu phụ mỗi cái <= 30%      [range: 0.20–0.40]
+ATR_PINBAR_MIN_MULT    = 0.50   # Nến quá nhỏ < 0.5×ATR14 → loại     [range: 0.30–1.00]
+VSA_VOLUME_MULTIPLIER  = 1.50   # Volume Spike = x × SMA20 volume    [range: 1.20–2.50]
