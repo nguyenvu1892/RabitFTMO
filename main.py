@@ -9,9 +9,10 @@ Luồng hoạt động:
     4. Lấy Account Info (balance, equity)
     5. [Phase 2] Khởi tạo RiskManager — load SOD Balance, check hard stop
     6. [Phase 2] Smoke Test calculate_lot_size với SL giả định 200 points
-    7. Vòng lặp chính OnTick (Phase 3+)
+    7. [Phase 3] Smoke Test StrategyEngine — H1 Bias + M15 FVG active list
+    8. Vòng lặp chính OnTick (Phase 4+)
 
-Phase: 2 — Task 2.1 (Risk Management Integration)
+Phase: 3 — Task 3.1 (Strategy Engine Integration)
 
 Tác giả: Antigravity (AI Coder)
 Ngày cập nhật: 2026-03-05
@@ -29,16 +30,22 @@ from dotenv import load_dotenv
 from utils.logger import system_logger
 from core.data_pipeline import MT5DataPipeline
 from core.risk_manager import RiskManager
-from config.settings import SYMBOL, TIMEFRAME_M5
+from core.strategy_engine import StrategyEngine
+from config.settings import (
+    SYMBOL,
+    TIMEFRAME_M5,
+    TIMEFRAME_H1,
+    TIMEFRAME_M15,
+    CANDLE_COUNT_H1,
+    CANDLE_COUNT_M15,
+)
 
 
 # ============================================================
 # SMOKE TEST CONSTANTS
 # ============================================================
-SMOKE_CANDLES = 5    # Số nến kéo về để kiểm tra
-
-# SL giả định cho smoke test calculate_lot_size (Phase 2)
-SMOKE_SL_POINTS = 200   # 200 points = 0.200 USD/oz trên XAGUSD (digits=3)
+SMOKE_CANDLES   = 5    # Số nến kéo về để kiểm tra M5
+SMOKE_SL_POINTS = 200  # 200 points = 0.200 USD/oz (giả định cho Phase 2 test)
 
 
 def main():
@@ -169,11 +176,111 @@ def main():
     print("✅ PHASE 2 RISK MANAGER — SMOKE TEST HOÀN TẤT")
     print("=" * 70 + "\n")
 
-    # --- Bước 10: Vòng lặp chính (Phase 3+) ---
-    # TODO (Phase 3): Implement OnTick loop với Strategy Engine + RiskManager
+    # ============================================================
+    # [Phase 3] STRATEGY ENGINE — SMOKE TEST
+    # Vũ khí 1: H1 Market Structure → Directional Bias
+    # Vũ khí 2: M15 SMC FVG        → Active FVG Pool
+    # ============================================================
+
+    print("=" * 70)
+    print("🧭 PHASE 3 — STRATEGY ENGINE SMOKE TEST")
+    print("=" * 70)
+
+    # --- Bước 10: Khởi tạo StrategyEngine ---
+    engine   = StrategyEngine()
+    fvg_pool = engine.create_fvg_pool()
+
+    # --- Bước 11: Kéo dữ liệu H1 và M15 ---
+    system_logger.info(f"main | 📥 Kéo {CANDLE_COUNT_H1} nến H1 {SYMBOL}...")
+    df_h1 = pipeline.fetch_data(
+        symbol=SYMBOL,
+        timeframe=TIMEFRAME_H1,
+        limit=CANDLE_COUNT_H1,
+    )
+
+    system_logger.info(f"main | 📥 Kéo {CANDLE_COUNT_M15} nến M15 {SYMBOL}...")
+    df_m15 = pipeline.fetch_data(
+        symbol=SYMBOL,
+        timeframe=TIMEFRAME_M15,
+        limit=CANDLE_COUNT_M15,
+    )
+
+    if df_h1 is None or df_m15 is None:
+        system_logger.error(
+            "main | ❌ Không kéo được dữ liệu H1/M15. "
+            "Kiểm tra symbol có trong Market Watch không."
+        )
+        pipeline.disconnect()
+        return
+
+    print(f"\n   ✅ H1:  {len(df_h1)} nến  |  M15: {len(df_m15)} nến\n")
+
+    # --- Bước 12: VŨ KHÍ 1 — H1 Market Structure ---
+    print("-" * 70)
+    print("⚔️  VŨ KHÍ 1: Market Structure (H1)")
+    print("-" * 70)
+
+    h1_bias = engine.identify_market_structure(df_h1)
+
+    bias_emoji = {"BUY": "🟢", "SELL": "🔴", "NEUTRAL": "🟡"}.get(h1_bias, "⚪")
+    print(f"\n   {bias_emoji} H1 Directional Bias  :  {h1_bias}")
+    print(f"   📌 Ý nghĩa: ", end="")
+    if h1_bias == "BUY":
+        print("Xu hướng TĂNG — Chỉ tìm setup LONG khi giá vào FVG cầu")
+    elif h1_bias == "SELL":
+        print("Xu hướng GIẢM — Chỉ tìm setup SHORT khi giá vào FVG cung")
+    else:
+        print("Thị trường SIDEWAY — Chưa có xu hướng rõ ràng → Bỏ qua, chờ")
+
+    # --- Bước 13: VŨ KHÍ 2 — M15 FVG Active Pool ---
+    print(f"\n{'-' * 70}")
+    print("⚔️  VŨ KHÍ 2: SMC FVG (M15)")
+    print("-" * 70)
+
+    active_fvgs = engine.find_active_fvgs(df_m15, fvg_pool)
+
+    if not active_fvgs:
+        print("\n   ℹ️  Không có FVG active nào trên M15 hiện tại.")
+        print("      (Có thể FVG đã bị lấp hoặc dữ liệu chưa đủ điều kiện)")
+    else:
+        print(f"\n   📋 Tổng số FVG đang MỞ (Unmitigated): {len(active_fvgs)}\n")
+        print(
+            f"   {'#':>3}  {'Type':<9}  {'Bottom':>9}  {'Top':>9}  "
+            f"{'Size':>7}  {'Thời gian tạo'}"
+        )
+        print("   " + "-" * 62)
+        for idx, fvg in enumerate(active_fvgs, start=1):
+            fvg_size   = fvg["top"] - fvg["bottom"]
+            type_emoji = "🟢" if fvg["type"] == "BULLISH" else "🔴"
+            print(
+                f"   {idx:>3}  {type_emoji} {fvg['type']:<7}  "
+                f"{fvg['bottom']:>9.3f}  {fvg['top']:>9.3f}  "
+                f"{fvg_size:>7.4f}  {fvg['time']}"
+            )
+        print()
+
+        # --- Tóm tắt alignment H1 Bias với FVG ---
+        bullish_fvgs = [f for f in active_fvgs if f["type"] == "BULLISH"]
+        bearish_fvgs = [f for f in active_fvgs if f["type"] == "BEARISH"]
+
+        print("   📊 Phân tích Alignment (H1 Bias ↔ FVG M15):")
+        if h1_bias == "BUY" and bullish_fvgs:
+            print(f"   ✅ ALIGNED — H1 BUY + {len(bullish_fvgs)} Bullish FVG → CÓ THỂ TÌM LONG setup!")
+        elif h1_bias == "SELL" and bearish_fvgs:
+            print(f"   ✅ ALIGNED — H1 SELL + {len(bearish_fvgs)} Bearish FVG → CÓ THỂ TÌM SHORT setup!")
+        elif h1_bias == "NEUTRAL":
+            print("   ⚪ NEUTRAL — Chưa có bias H1 → Không vào lệnh dù có FVG.")
+        else:
+            print("   ⚠️  CONFLICT — H1 Bias và FVG M15 ngược chiều → Bỏ qua, chờ alignment.")
+
+    print("\n" + "=" * 70)
+    print("✅ PHASE 3 STRATEGY ENGINE — SMOKE TEST HOÀN TẤT")
+    print("=" * 70 + "\n")
+
     system_logger.info(
-        "main | ✅ Phase 2 Smoke Test hoàn tất. "
-        "Vòng lặp chính sẽ implement ở Phase 3."
+        f"main | ✅ Phase 3 Smoke Test hoàn tất. "
+        f"H1 Bias={h1_bias}, FVG Active={len(active_fvgs)}. "
+        "Vòng lặp OnTick sẽ implement ở Phase 4."
     )
 
     # --- Đóng kết nối sạch ---

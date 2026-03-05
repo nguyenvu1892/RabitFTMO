@@ -66,3 +66,13 @@ FORMAT: [Phase X] Task X.X <Tên Task> - Lý do: <Giải thích>
   - Người thực thi: Antigravity (AI Coder)
   - TechLead review: ĐÃ DUYỆT (hotfix)
 ------------------------------------------------------------
+[Phase 3] Task 3.1 Code logic H1 và M15
+  - Ngày  : 2026-03-05
+  - Branch : feature/phase3.1-h1-m15-logic
+  - Lý do  : Xây dựng la bàn định hướng và vùng thanh khoản theo SMC, áp dụng Anti-Repainting
+  - Files dự kiến:
+      core/strategy_engine.py  — Class StrategyEngine (identify_market_structure, find_active_fvgs)
+      docs/walkthrough.md      — Phân tích thuật toán Market Structure H1 + SMC FVG M15
+  - Người thực thi: Antigravity (AI Coder)
+  - TechLead review: ĐANG CHỜ DUYỆT
+------------------------------------------------------------
